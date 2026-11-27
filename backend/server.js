@@ -4,12 +4,16 @@ import "dotenv/config";
 import { Worker, Attendance, Payroll, Transaction, initDatabase } from "./db.js";
 import { requireAdmin, handleLogin } from "./auth.js";
 import { calculateAttendanceMetrics, syncOpenDraftsForWorker } from "./payroll.js";
-import { startWhatsAppBot } from "./whatsapp.js";
+import { startWhatsAppBot, getWhatsAppStatus } from "./whatsapp.js";
 
 const app = express();
+
+const allowedFrontend = (process.env.FRONTEND_URL || "").replace(/\/$/, "");
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL ? [process.env.FRONTEND_URL, "http://localhost:5173"] : "*",
+    origin: allowedFrontend
+      ? [allowedFrontend, /\.vercel\.app$/, "http://localhost:5173"]
+      : "*",
   })
 );
 app.use(express.json());
@@ -17,6 +21,42 @@ app.use(express.json());
 // Health Check (for Render & UptimeRobot)
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// Clean QR Code Pairing Page
+app.get("/qr", (req, res) => {
+  const { status, qrDataUrl } = getWhatsAppStatus();
+  if (status === "CONNECTED") {
+    return res.send(`
+      <html>
+        <body style="font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0fdf4;color:#166534">
+          <h2>WhatsApp Bot is Connected!</h2>
+          <p>Your session is saved in MongoDB. You can close this tab.</p>
+        </body>
+      </html>
+    `);
+  }
+  if (!qrDataUrl) {
+    return res.send(`
+      <html>
+        <head><meta http-equiv="refresh" content="3"></head>
+        <body style="font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f8fafc;color:#334155">
+          <h3>WhatsApp Status: ${status}</h3>
+          <p>Generating QR code... this page refreshes automatically every 3 seconds.</p>
+        </body>
+      </html>
+    `);
+  }
+  res.send(`
+    <html>
+      <head><meta http-equiv="refresh" content="15"></head>
+      <body style="font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f8fafc">
+        <h2 style="margin-bottom:8px;color:#0f172a">Scan with WhatsApp &rarr; Linked Devices</h2>
+        <p style="margin-top:0;margin-bottom:20px;color:#64748b;font-size:14px">Auto-refreshes every 15 seconds until paired</p>
+        <img src="${qrDataUrl}" alt="WhatsApp QR Code" style="width:300px;height:300px;border:12px solid #fff;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,0.08)" />
+      </body>
+    </html>
+  `);
 });
 
 // Auth

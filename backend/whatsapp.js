@@ -4,7 +4,7 @@ import makeWASocket, {
   initAuthCreds,
   BufferJSON,
 } from "@whiskeysockets/baileys";
-import qrcode from "qrcode-terminal";
+import QRCode from "qrcode";
 import pino from "pino";
 import { Worker, Payroll, Transaction, WaSession } from "./db.js";
 import {
@@ -16,6 +16,13 @@ import {
 
 const DEFAULT_COMPANY_ID = process.env.COMPANY_ID || "RECOGE";
 const botSentIds = new Set();
+
+let latestQrDataUrl = null;
+let waStatus = "INITIALIZING";
+
+export function getWhatsAppStatus() {
+  return { status: waStatus, qrDataUrl: latestQrDataUrl };
+}
 
 async function useMongoAuthState() {
   const readData = async (id) => {
@@ -304,19 +311,24 @@ export async function startWhatsAppBot() {
 
   sock.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
     if (qr) {
-      console.log("\nScan this QR code in WhatsApp -> Linked Devices:\n");
-      qrcode.generate(qr, { small: true });
+      waStatus = "WAITING_FOR_QR";
+      latestQrDataUrl = await QRCode.toDataURL(qr, { width: 320, margin: 2 });
+      console.log("New WhatsApp QR generated. Open /qr in your browser to scan.");
     }
     if (connection === "close") {
+      waStatus = "DISCONNECTED";
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       if (statusCode === DisconnectReason.loggedOut) {
         console.log("WhatsApp logged out. Clearing session from MongoDB and restarting...");
+        latestQrDataUrl = null;
         await WaSession.deleteMany({});
         startWhatsAppBot();
       } else {
         setTimeout(() => startWhatsAppBot(), 3000);
       }
     } else if (connection === "open") {
+      waStatus = "CONNECTED";
+      latestQrDataUrl = null;
       console.log("WhatsApp Bot connected to MongoDB Backend.");
     }
   });
